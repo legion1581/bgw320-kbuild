@@ -7,7 +7,7 @@
 
 static int __init hello_init(void)
 {
-	// the two Broadcom-grown structs: stock values are 2240 / 576 (upstream 5.15: 1984 / 232)
+	// the two Broadcom-grown structs: stock values are 2240 / 576 (upstream 5.15.167 with the stock config: 1984 / 224)
 	pr_info("hello: BGW320 module loaded, sizeof(net_device)=%zu sizeof(sk_buff)=%zu\n",
 		sizeof(struct net_device), sizeof(struct sk_buff));
 	return 0;
