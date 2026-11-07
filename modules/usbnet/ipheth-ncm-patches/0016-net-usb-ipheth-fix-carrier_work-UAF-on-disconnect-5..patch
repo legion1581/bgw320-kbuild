@@ -1,0 +1,113 @@
+From d0b59c04eeeb3df3ca340edbc8115f5db24748ff Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Sun, 18 Oct 2026 22:40:09 -0700
+Subject: [PATCH 16/16] net: usb: ipheth: fix carrier_work UAF on disconnect
+ (5.15 backport of fde39b8a5217, flag+spinlock instead of
+ enable/disable_delayed_work)
+
+---
+ drivers/net/usb/ipheth.c | 46 +++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 43 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/usb/ipheth.c b/drivers/net/usb/ipheth.c
+index e2a7db2..11fc617 100644
+--- a/drivers/net/usb/ipheth.c
++++ b/drivers/net/usb/ipheth.c
+@@ -113,6 +113,12 @@ struct ipheth_device {
+ 	u8 bulk_in;
+ 	u8 bulk_out;
+ 	struct delayed_work carrier_work;
++	/* 5.15 backport of upstream fde39b8a5217: there is no
++	 * enable/disable_delayed_work() before v6.10, so gate every
++	 * (re-)arm of carrier_work on this flag, under this lock.
++	 */
++	spinlock_t carrier_work_lock;
++	bool carrier_work_enabled;
+ 	bool confirmed_pairing;
+ 	int (*rcvbulk_callback)(struct urb *urb);
+ 	size_t rx_buf_len;
+@@ -120,6 +126,30 @@ struct ipheth_device {
+ 
+ static int ipheth_rx_submit(struct ipheth_device *dev, gfp_t mem_flags);
+ 
++/* Arm carrier_work only while the interface is up (between ipheth_open()
++ * and ipheth_close()); otherwise this is a no-op.
++ */
++static void ipheth_schedule_carrier_work(struct ipheth_device *dev,
++					 unsigned long delay)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->carrier_work_lock, flags);
++	if (dev->carrier_work_enabled)
++		schedule_delayed_work(&dev->carrier_work, delay);
++	spin_unlock_irqrestore(&dev->carrier_work_lock, flags);
++}
++
++static void ipheth_set_carrier_work_enabled(struct ipheth_device *dev,
++					    bool enabled)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->carrier_work_lock, flags);
++	dev->carrier_work_enabled = enabled;
++	spin_unlock_irqrestore(&dev->carrier_work_lock, flags);
++}
++
+ static int ipheth_alloc_urbs(struct ipheth_device *iphone)
+ {
+ 	struct urb *tx_urb = NULL;
+@@ -357,7 +387,7 @@ static void ipheth_sndbulk_callback(struct urb *urb)
+ 		netif_wake_queue(dev->net);
+ 	else
+ 		// on URB error, trigger immediate poll
+-		schedule_delayed_work(&dev->carrier_work, 0);
++		ipheth_schedule_carrier_work(dev, 0);
+ }
+ 
+ static int ipheth_carrier_set(struct ipheth_device *dev)
+@@ -401,7 +431,7 @@ static void ipheth_carrier_check_work(struct work_struct *work)
+ 						 carrier_work.work);
+ 
+ 	ipheth_carrier_set(dev);
+-	schedule_delayed_work(&dev->carrier_work, IPHETH_CARRIER_CHECK_TIMEOUT);
++	ipheth_schedule_carrier_work(dev, IPHETH_CARRIER_CHECK_TIMEOUT);
+ }
+ 
+ static int ipheth_get_macaddr(struct ipheth_device *dev)
+@@ -491,7 +521,8 @@ static int ipheth_open(struct net_device *net)
+ 	if (retval)
+ 		return retval;
+ 
+-	schedule_delayed_work(&dev->carrier_work, IPHETH_CARRIER_CHECK_TIMEOUT);
++	ipheth_set_carrier_work_enabled(dev, true);
++	ipheth_schedule_carrier_work(dev, IPHETH_CARRIER_CHECK_TIMEOUT);
+ 	return retval;
+ }
+ 
+@@ -500,6 +531,12 @@ static int ipheth_close(struct net_device *net)
+ 	struct ipheth_device *dev = netdev_priv(net);
+ 
+ 	netif_stop_queue(net);
++	/* A TX URB can still complete with an error after this point and
++	 * try to re-arm the carrier work. Disable it before cancelling, so
++	 * that such a re-arm (and the work's own self re-arm) is a no-op.
++	 * cancel_delayed_work_sync() then waits for a running instance.
++	 */
++	ipheth_set_carrier_work_enabled(dev, false);
+ 	cancel_delayed_work_sync(&dev->carrier_work);
+ 	return 0;
+ }
+@@ -634,6 +671,9 @@ static int ipheth_probe(struct usb_interface *intf,
+ 	}
+ 
+ 	INIT_DELAYED_WORK(&dev->carrier_work, ipheth_carrier_check_work);
++	/* Armed only between ipheth_open() and ipheth_close(). */
++	spin_lock_init(&dev->carrier_work_lock);
++	dev->carrier_work_enabled = false;
+ 
+ 	retval = ipheth_alloc_urbs(dev);
+ 	if (retval) {
+-- 
+2.34.1
+

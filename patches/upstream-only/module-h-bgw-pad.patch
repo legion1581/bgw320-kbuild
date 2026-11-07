@@ -1,0 +1,10 @@
+--- a/include/linux/module.h	2024-09-12 02:07:53.000000000 -0700
++++ b/include/linux/module.h	2026-10-13 21:05:34.636638319 -0700
+@@ -416,6 +416,7 @@
+ 	struct exception_table_entry *extable;
+ 
+ 	/* Startup function. */
++	void *bgw_vendor_pad;	/* BGW320 stock 5.15.167 has one extra 8-byte field before init (init@0x140, exit@0x248) */
+ 	int (*init)(void);
+ 
+ 	/* Core layout: rbtree is accessed frequently, so keep together. */

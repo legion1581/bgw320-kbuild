@@ -1,0 +1,172 @@
+From feb1cf9d7e4dc26e4fcacded3bd49ef1f5d0c18e Mon Sep 17 00:00:00 2001
+From: x <x>
+Date: Sun, 18 Oct 2026 21:34:36 -0700
+Subject: [PATCH 2/2] BGW320 stock layout: netdevice/skbuff BCM additions
+
+---
+ include/linux/bcm_skbuff.h               | 15 +++++++++------
+ include/linux/netdevice.h                | 16 ++++++++++++++++
+ include/linux/skbuff.h                   | 14 ++++++++++++++
+ include/uapi/linux/netfilter/xt_FSMARK.h |  4 ++--
+ 4 files changed, 41 insertions(+), 8 deletions(-)
+
+diff --git a/include/linux/bcm_skbuff.h b/include/linux/bcm_skbuff.h
+index 6937e16a4..52fcad81c 100644
+--- a/include/linux/bcm_skbuff.h
++++ b/include/linux/bcm_skbuff.h
+@@ -200,7 +200,7 @@ struct vlan_ext {
+ 	} bcm_flags;
+ 	__u16			vlan_count;
+ 	__u16			vlan_tpid;
+-	__u32			cfi_save;
++	/* BGW320 stock: no cfi_save here (verified: vlan_header at bcm_ext+32, rxdev at +48) */
+ 	__u32			vlan_header[SKB_VLAN_MAX_TAGS];
+ 	struct net_device	*rxdev;
+ };
+@@ -251,6 +251,7 @@ struct bcm_skb_ext {
+ 	struct nf_queue_entry	*q_entry; /* sgs packet queue to reinject to the stack */
+ 	uint32_t fc_ctxt; 
+ 	fsmark_conds_t      fsmark_conds;
++	__u32		bgw_unknown_u32; /* BGW320 stock: copied by bcm_skbuff_copy_skb_header at skb+296; name unknown */
+ };
+ 
+ /* accessor macro */
+@@ -301,7 +302,7 @@ void skb_shinforeset(struct skb_shared_info *skb_shinfo);
+ #if defined(CONFIG_BCM_KF_MPTCP)
+ #define BCM_SKB_CB_SIZE		80
+ #else
+-#define BCM_SKB_CB_SIZE		48
++#define BCM_SKB_CB_SIZE		64 /* BGW320 stock: 64 (skb_cb_zero) */
+ #endif
+ 
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0))
+@@ -642,7 +643,11 @@ struct sk_buff {
+ 		u64		skb_mstamp_ns; /* earliest departure time */
+ 	};
+ #if defined(CONFIG_BCM_KF_NBUFF)
+-	__u32 unused;
++	struct {
++		unsigned int is_spc:1;
++		unsigned int spc_reserved:7;
++		unsigned int spc_tot_len:24;
++	};
+ 	union {
+ 		/* 3 bytes unused */
+ 		unsigned int recycle_and_rnr_flags;
+@@ -702,9 +707,6 @@ struct sk_buff {
+ 			__u32       fpm_num;
+ 		};
+ 
+-#if IS_ENABLED(CONFIG_BCM_NF_FSMARK)
+-		fsmark_conds_t      fsmark_conds;
+-#endif
+ #ifdef CONFIG_64BIT
+ 	}  ____cacheline_aligned;
+ 	/*
+@@ -736,6 +738,7 @@ struct sk_buff {
+ 		unsigned long		_sk_redir;
+ 	};
+ 
++	void			*bgw_unknown_ptr; /* BGW320 stock: 8 bytes at skb+0x140 between destructor and _nfct; name unknown */
+ 	unsigned long		 _nfct;
+ #if defined(CONFIG_BCM_KF_NBUFF)
+ 	unsigned int		data_len;
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index cc9d2358c..c065bb2c8 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -50,6 +50,10 @@
+ #include <linux/rbtree.h>
+ #include <linux/android_kabi.h>
+ 
++#if defined(CONFIG_BCM_KF_NETDEV_EXT)
++#include <linux/bcm_netdevice.h>
++#endif /* CONFIG_BCM_KF_NETDEV_EXT */
++
+ struct netpoll_info;
+ struct device;
+ struct ethtool_ops;
+@@ -192,6 +196,14 @@ struct net_device_stats {
+ 	unsigned long	tx_window_errors;
+ 	unsigned long	rx_compressed;
+ 	unsigned long	tx_compressed;
++#if defined(CONFIG_BCM_KF_EXTSTATS)
++	unsigned long   tx_multicast_packets;  /* multicast packets transmitted */
++	unsigned long   rx_multicast_bytes;  /* multicast bytes recieved */
++	unsigned long   tx_multicast_bytes;  /* multicast bytes transmitted */
++	unsigned long   rx_broadcast_packets;  /* broadcast packets recieved */
++	unsigned long   tx_broadcast_packets;  /* broadcast packets transmitted */
++	unsigned long   rx_unknown_packets;  /* unknown protocol packets recieved */
++#endif
+ };
+ 
+ 
+@@ -2064,6 +2076,10 @@ struct net_device {
+ 
+ 	struct net_device_stats	stats; /* not used by modern drivers */
+ 
++#if defined(CONFIG_BCM_KF_NETDEV_EXT)
++	struct bcm_netdev_ext bcm_nd_ext;
++#endif
++
+ 	atomic_long_t		rx_dropped;
+ 	atomic_long_t		tx_dropped;
+ 	atomic_long_t		rx_nohandler;
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 3960082f0..eac06a522 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -554,6 +554,11 @@ int skb_zerocopy_iter_stream(struct sock *sk, struct sk_buff *skb,
+  * the end of the header data, ie. at skb->end.
+  */
+ struct skb_shared_info {
++#if defined(CONFIG_BCM_KF_NBUFF)
++	/* to preserve compat with binary only modules, do not change the
++	 * position of this field relative to the start of the structure. */
++	__u8		*dirty_p;
++#endif	/* defined(CONFIG_BCM_KF_NBUFF) */
+ 	__u8		flags;
+ 	__u8		meta_len;
+ 	__u8		nr_frags;
+@@ -654,6 +659,10 @@ typedef unsigned int sk_buff_data_t;
+ typedef unsigned char *sk_buff_data_t;
+ #endif
+ 
++#if defined(CONFIG_BCM_KF_SKB_EXT)
++#include <linux/bcm_skbuff.h>
++#endif
++
+ /**
+  *	struct sk_buff - socket buffer
+  *	@next: Next buffer in list
+@@ -762,7 +771,12 @@ typedef unsigned char *sk_buff_data_t;
+  *	@extensions: allocated extensions, valid if active_extensions is nonzero
+  */
+ 
++#if defined(CONFIG_BCM_KF_SKB_EXT)
++/* struct sk_buff is defined in bcm_skbuff.h */
++struct sk_buff_orig {
++#else
+ struct sk_buff {
++#endif
+ 	union {
+ 		struct {
+ 			/* These two members must be first. */
+diff --git a/include/uapi/linux/netfilter/xt_FSMARK.h b/include/uapi/linux/netfilter/xt_FSMARK.h
+index fd7cff604..5cf8beb1c 100644
+--- a/include/uapi/linux/netfilter/xt_FSMARK.h
++++ b/include/uapi/linux/netfilter/xt_FSMARK.h
+@@ -7,8 +7,8 @@
+ #define MAX_NF_FSMARK_QUERY_PER_PKT     8    // Max # of FSMARK query per packet/flow
+ 
+ typedef struct {
+-    __u8       id      : 7;    // FSMARK query Id
+-    __u8       conds   : 1;    // entry used
++    __u16      id      : 15;   // FSMARK query Id   (BGW320 stock: 16-bit entries, see fsmark_tg)
++    __u16      conds   : 1;    // entry used
+ } fsmark_cond_t;
+ 
+ typedef union {
+-- 
+2.34.1
+

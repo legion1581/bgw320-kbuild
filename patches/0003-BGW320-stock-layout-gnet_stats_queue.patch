@@ -1,0 +1,14 @@
+diff --git a/include/uapi/linux/gen_stats.h b/include/uapi/linux/gen_stats.h
+index 852f234f1..819395602 100644
+--- a/include/uapi/linux/gen_stats.h
++++ b/include/uapi/linux/gen_stats.h
+@@ -59,6 +59,9 @@ struct gnet_stats_rate_est64 {
+ struct gnet_stats_queue {
+ 	__u32	qlen;
+ 	__u32	backlog;
++	/* BGW320 stock kernel layout (Broadcom): a 64-bit counter at +8, so drops@0x10 requeues@0x14 overlimits@0x18,
++	 * sizeof 0x20. Measured from the stock __gnet_stats_copy_queue / qdisc_tree_reduce_backlog. */
++	__u64	bgw_stock_cnt;
+ 	__u32	drops;
+ 	__u32	requeues;
+ 	__u32	overlimits;
