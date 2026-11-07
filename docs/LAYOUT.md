@@ -15,7 +15,7 @@ The evidence:
 - `struct module` is 8 bytes longer before `init` than in upstream: init is at `0x140`, exit at `0x248`, against
   upstream's `0x138` / `0x240`. Those 8 bytes are ACK's `const char *scmversion`. On a plain upstream tree they
   need a hack (`patches/upstream-only/module-h-bgw-pad.patch`); on the ACK tree they come out right by themselves.
-- The kernel exports `del_timer_sync`, not `timer_delete_sync`. A usbnet built on upstream 5.15.167 does not load;
+- The kernel exports `del_timer_sync`, not `timer_delete_sync`. In upstream 5.15.167 `del_timer_sync()` is an inline wrapper around `timer_delete_sync`, so a usbnet built there asks for a symbol the stock kernel lacks and does not load;
   one built on ACK does.
 
 ## net_device: 1984 -> 2240 bytes (`netdev_priv()` +256)
