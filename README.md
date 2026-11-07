@@ -1,5 +1,7 @@
 # bgw320-kbuild
 
+![bgw320-kbuild: kernel modules for the AT&T BGW320-500 stock Linux 5.15.167 kernel](docs/hero.jpg)
+
 Build loadable kernel modules for the **AT&T BGW320-500**'s stock kernel: **Linux 5.15.167** from AT&T
 firmware **6.35.8**, which ships without source or headers.
 
